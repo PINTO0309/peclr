@@ -9,7 +9,7 @@ import torch
 import subprocess
 import numpy as np
 import os
-
+import cv2
 from src.models.rn_25D_wMLPref import RN_25D_wMLPref
 from testing.fh_utils import (
     json_load,
@@ -25,12 +25,12 @@ from testing.fh_utils import (
 
 BBOX_SCALE = 0.33
 CROP_SIZE = 224
-DS_PATH = "/hdd/Datasets/freihand_dataset/"
+DS_PATH = "data/raw/freihand_dataset/"
 
 
 def main(base_path, pred_func, out_name, set_name=None):
     """
-    Main eval loop: Iterates over all evaluation samples and saves the corresponding 
+    Main eval loop: Iterates over all evaluation samples and saves the corresponding
     predictions.
     """
     # default value
@@ -78,7 +78,7 @@ def dump(xyz_pred_list, verts_pred_list, out_name):
 
 
 def pred(img_orig, K_orig, scale, model, T):
-    """ 
+    """
     Predict joints and vertices from a given sample.
     img: (224, 224, 30 RGB image.
     K: (3, 3) camera intrinsic matrix.
@@ -96,6 +96,11 @@ def pred(img_orig, K_orig, scale, model, T):
     # Predict
     with torch.no_grad():
         output = model(feed)
+    # kp2d: XY絶対座標
+    # tensor([[ 77.6334, 132.1834],
+    #         [ 52.1539,  97.9966],
+    #         [112.0616, 104.7996],
+    #         [126.4903, 130.2509],
     kp2d = output["kp25d"][:, :21, :2][0]
     bbox = get_bbox_from_pose(kp2d.cpu().numpy())
     # Apply inverse affine transform
@@ -105,6 +110,21 @@ def pred(img_orig, K_orig, scale, model, T):
     # Recreate affine transform
     T = create_affine_transform_from_bbox(bbox, CROP_SIZE)
     img, K = preprocess(img_orig, K_orig, T, CROP_SIZE)
+
+    # image_mean = np.array([0.485, 0.456, 0.406])
+    # image_std = np.array([0.229, 0.224, 0.225])
+    # numpy_image = img.numpy()[0]
+    # numpy_image = numpy_image.transpose(1, 2, 0)
+    # numpy_image = (numpy_image * image_std) + image_mean
+    # numpy_image = numpy_image * 255
+    # numpy_image = numpy_image.astype(np.uint8)
+    # numpy_image = cv2.cvtColor(numpy_image, cv2.COLOR_RGB2BGR)
+    # np.save('image.npy', numpy_image)
+    # cv2.imshow('Image', numpy_image)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # a=0
+
     # Create feed dict
     feed = {"image": img.float().to(dev), "K": K.float().to(dev)}
     # Predict again
@@ -128,7 +148,7 @@ def pred(img_orig, K_orig, scale, model, T):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument("--model_path", default="rn152_peclr_yt3d-fh_pt_fh_ft.pth", type=str)
     args = parser.parse_args()
 
     model_path = args.model_path
@@ -145,7 +165,81 @@ if __name__ == "__main__":
     checkpoint = torch.load(model_path)
     model_.load_state_dict(checkpoint["state_dict"])
     model_.eval()
-    model_.to(dev)
+    # model_.to(dev)
+    model_.cpu()
+
+
+
+    import onnx
+    from onnxsim import simplify
+    RESOLUTION = [
+        [224,224],
+    ]
+    MODEL = f'peclr_{model_type}'
+    for H, W in RESOLUTION:
+        onnx_file = f"{MODEL}_1x3x{H}x{W}.onnx"
+        x = torch.randn(1, 3, H, W).cpu()
+        """
+        output["kp3d"] = kp3d
+        output["zrel"] = zrel
+        output["kp2d"] = kp2d
+        output['kp25d'] = kp25d
+        """
+        torch.onnx.export(
+            model_,
+            args=(x),
+            f=onnx_file,
+            opset_version=11,
+            input_names=['input'],
+            output_names=['kp3d', 'kp2d'],
+        )
+        model_onnx1 = onnx.load(onnx_file)
+        model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
+        onnx.save(model_onnx1, onnx_file)
+        model_onnx2 = onnx.load(onnx_file)
+        model_simp, check = simplify(model_onnx2)
+        onnx.save(model_simp, onnx_file)
+        model_onnx2 = onnx.load(onnx_file)
+        model_simp, check = simplify(model_onnx2)
+        onnx.save(model_simp, onnx_file)
+        model_onnx2 = onnx.load(onnx_file)
+        model_simp, check = simplify(model_onnx2)
+        onnx.save(model_simp, onnx_file)
+
+        onnx_file = f"{MODEL}_Nx3x{H}x{W}.onnx"
+        x = torch.randn(1, 3, H, W).cpu()
+        torch.onnx.export(
+            model_,
+            args=(x),
+            f=onnx_file,
+            opset_version=11,
+            input_names=['input'],
+            output_names=['kp3d', 'kp2d'],
+            dynamic_axes={
+                'input' : {0: 'N'},
+                'kp3d' : {0: 'N'},
+                'kp2d' : {0: 'N'},
+            }
+        )
+        model_onnx1 = onnx.load(onnx_file)
+        model_onnx1 = onnx.shape_inference.infer_shapes(model_onnx1)
+        onnx.save(model_onnx1, onnx_file)
+        model_onnx2 = onnx.load(onnx_file)
+        model_simp, check = simplify(model_onnx2)
+        onnx.save(model_simp, onnx_file)
+        model_onnx2 = onnx.load(onnx_file)
+        model_simp, check = simplify(model_onnx2)
+        onnx.save(model_simp, onnx_file)
+        model_onnx2 = onnx.load(onnx_file)
+        model_simp, check = simplify(model_onnx2)
+        onnx.save(model_simp, onnx_file)
+
+
+    import sys
+    sys.exit(0)
+
+
+
     model = lambda feed: model_(feed["image"], feed["K"])
     # Create initial bbox
     bbox = np.array([0, 0, CROP_SIZE, CROP_SIZE], dtype=np.float32)

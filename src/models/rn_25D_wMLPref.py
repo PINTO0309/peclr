@@ -110,7 +110,8 @@ class RN_25D_wMLPref(nn.Module):
             K = self.K_default
 
         out = self.backend_model(img)
-        kp25d = out[:, :-1].view(-1,21,3)
+        switch_index = torch.tensor([0,1,6,11,16,2,7,12,17,3,8,13,18,4,9,14,19,5,10,15,20], dtype=torch.int64)
+        kp25d = out[:, :-1].view(-1,21,3)[:, switch_index, :]
         kp2d = kp25d[..., :2]
         zrel = kp25d[..., 2:3]
         # We know that zrel of root is 0
@@ -127,8 +128,8 @@ class RN_25D_wMLPref(nn.Module):
 
         output = {}
         output["kp3d"] = kp3d
-        output["zrel"] = zrel
+        # output["zrel"] = zrel
         output["kp2d"] = kp2d
-        output['kp25d'] = kp25d
+        # output['kp25d'] = kp25d
 
         return output
